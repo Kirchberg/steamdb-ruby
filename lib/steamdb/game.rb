@@ -62,6 +62,10 @@ module SteamDB
       @data.dig(:info, :library_logo_url)
     end
 
+    def library_hero_url
+      @data.dig(:info, :library_hero_url)
+    end
+
     def metacritic_score
       @data.dig(:info, :metacritic_score)
     end
@@ -133,6 +137,7 @@ module SteamDB
       game_info[:description] = page.at_css('p.header-description')&.text&.strip.to_s
       game_info[:logo_url] = page.at_css('img.app-logo')&.[]('src')
       game_info[:library_logo_url] = parse_library_logo(page)
+      game_info[:library_hero_url] = parse_library_hero(page)
 
       game_info
     end
@@ -211,6 +216,53 @@ module SteamDB
             
             # Prefer 2x version if available, otherwise use 1x
             return library_logo_2x_url || library_logo_url
+          end
+        end
+      end
+      
+      nil
+    end
+
+    def parse_library_hero(page)
+      # Find library_hero section in the assets table
+      library_hero_url = nil
+      library_hero_2x_url = nil
+      
+      page.css('tr').each do |row|
+        cells = row.css('td')
+        cells.each_with_index do |cell, i|
+          if cell.text.strip == 'library_hero ↴'
+            # Look for image/english and image2x/english in following rows
+            rows = row.parent.css('tr')
+            current_index = rows.index(row)
+            
+            # Check next 15 rows after library_hero ↴
+            (current_index + 1..[current_index + 15, rows.length - 1].min).each do |idx|
+              next_row_cells = rows[idx].css('td')
+              
+              next_row_cells.each_with_index do |nc, j|
+                text = nc.text.strip
+                
+                if text == 'image/english' || text == 'image2x/english'
+                  # Get the link in the next cell
+                  link = next_row_cells[j + 1]&.at_css('a')
+                  if link
+                    href = link['href']
+                    # Check if it's a hero file (hero.png, hero_2x.png, or contains "hero" in path)
+                    if href.match?(/hero/i) || href.match?(/library_hero/i)
+                      if text == 'image2x/english'
+                        library_hero_2x_url = href
+                      elsif text == 'image/english' && library_hero_url.nil?
+                        library_hero_url = href
+                      end
+                    end
+                  end
+                end
+              end
+            end
+            
+            # Prefer 2x version if available, otherwise use 1x
+            return library_hero_2x_url || library_hero_url
           end
         end
       end
