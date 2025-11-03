@@ -1,0 +1,149 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require 'bundler/setup'
+require 'steamdb'
+require 'json'
+
+# ============================================
+# SteamDB CLI - Get game data as JSON
+# ============================================
+
+def check_flaresolverr
+  require 'net/http'
+  uri = URI('http://localhost:8191/v1')
+  http = Net::HTTP.new(uri.host, uri.port)
+  http.open_timeout = 2
+  http.read_timeout = 2
+  http.get(uri.path)
+  true
+rescue StandardError
+  false
+end
+
+def usage
+  puts <<~USAGE
+    Usage: steamdb [OPTIONS] <app_id>
+    
+    Get game data from SteamDB as JSON.
+    
+    Options:
+      --pretty, -p    Pretty print JSON (with indentation)
+      --help, -h      Show this help message
+    
+    Examples:
+      steamdb 271590              # Get data for GTA V (compact JSON)
+      steamdb 271590 --pretty     # Get data for GTA V (formatted JSON)
+      steamdb 730 --pretty > game.json  # Save to file
+    
+    Requirements:
+      - FlareSolverr running on http://localhost:8191
+      - Run: docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
+  USAGE
+end
+
+# Parse arguments
+pretty = false
+app_id = nil
+
+ARGV.each do |arg|
+  case arg
+  when '--pretty', '-p'
+    pretty = true
+  when '--help', '-h'
+    usage
+    exit 0
+  when /^\d+$/
+    app_id = arg.to_i
+  end
+end
+
+if app_id.nil? || app_id <= 0
+  STDERR.puts "Error: App ID required"
+  STDERR.puts
+  usage
+  exit 1
+end
+
+# Check FlareSolverr
+unless check_flaresolverr
+  error_json = {
+    error: true,
+    message: 'FlareSolverr is not running',
+    type: 'FlareSolverrError',
+    help: 'Start FlareSolverr with: docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest'
+  }
+  puts pretty ? JSON.pretty_generate(error_json) : JSON.generate(error_json)
+  exit 1
+end
+
+# Configure
+solver = SteamDB::FlareSolverrSolver.new(
+  endpoint: 'http://localhost:8191/v1',
+  timeout: 60_000
+)
+
+SteamDB.configure do |client|
+  client.configure_captcha(solver: solver, enabled: true)
+  # Cache enabled by default (300s), no throttling needed with FlareSolverr
+end
+
+# Fetch and parse
+begin
+  game = SteamDB::Game.new(app_id)
+  game.fetch_data
+  game.parse
+  
+  # Prepare JSON
+  json_data = {
+    app_id: app_id,
+    timestamp: Time.now.iso8601,
+    data: game.data,
+    summary: {
+      name: game.name || game.data.dig(:info, :name),
+      developer: game.data.dig(:info, :developer),
+      publisher: game.data.dig(:info, :publisher),
+      description: game.description,
+      logo_url: game.logo_url,
+      library_logo_url: game.library_logo_url,
+      metacritic_score: game.metacritic_score,
+      metacritic_fullurl: game.metacritic_fullurl,
+      prices_count: game.prices.length,
+      screenshots_count: game.screenshots.length
+    }
+  }
+  
+  # Output JSON
+  puts pretty ? JSON.pretty_generate(json_data) : JSON.generate(json_data)
+  
+rescue SteamDB::HTTPError => e
+  error_json = {
+    error: true,
+    message: e.message,
+    type: 'HTTPError',
+    app_id: app_id
+  }
+  puts pretty ? JSON.pretty_generate(error_json) : JSON.generate(error_json)
+  exit 1
+  
+rescue SteamDB::FlareSolverr::Error => e
+  error_json = {
+    error: true,
+    message: e.message,
+    type: 'FlareSolverrError',
+    app_id: app_id
+  }
+  puts pretty ? JSON.pretty_generate(error_json) : JSON.generate(error_json)
+  exit 1
+  
+rescue StandardError => e
+  error_json = {
+    error: true,
+    message: e.message,
+    type: e.class.name,
+    app_id: app_id
+  }
+  puts pretty ? JSON.pretty_generate(error_json) : JSON.generate(error_json)
+  exit 1
+end
+

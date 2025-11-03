@@ -1,0 +1,12 @@
+# Bundler and gem artefacts
+/.bundle/
+/vendor/
+/pkg/
+/Gemfile.lock
+
+# Ruby build and coverage artefacts
+/coverage/
+/tmp/
+
+# macOS metadata
+.DS_Store
