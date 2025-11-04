@@ -25,7 +25,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ['lib']
   spec.executables = ['steamdb']
 
-  spec.add_dependency 'nokogiri', '>= 1.16'
+  spec.add_dependency 'nokogiri', '>= 1.15'
   spec.add_dependency 'http-cookie', '>= 1.0'
 
   spec.add_development_dependency 'bundler', '>= 2.5'
