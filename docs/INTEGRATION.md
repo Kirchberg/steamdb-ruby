@@ -20,7 +20,8 @@ require 'steamdb'
 
 solver = SteamDB::FlareSolverrSolver.new(
   endpoint: ENV.fetch('FLARESOLVERR_URL', 'http://localhost:8191/v1'),
-  timeout: 60_000
+  timeout: 60_000,
+  session: true # Reuse a browser session; set false to disable
 )
 
 SteamDB.configure do |client|
@@ -41,6 +42,31 @@ game.parse
 puts game.name
 puts game.prices.length
 ```
+
+### Charts and Info Pages
+
+```ruby
+# /app/:id/info/ (languages, DLC, depots, tags, packages)
+info = SteamDB::GameInfo.new(1808500)
+info.fetch_data
+info.parse
+
+puts info.data[:languages].length
+puts info.data[:tags].first(5)
+
+# /app/:id/charts/ (player charts from API)
+charts = SteamDB::GameCharts.new(1808500)
+charts.parse
+
+puts charts.data[:summary]
+```
+
+Notes:
+
+- `GameCharts` uses the SteamDB chart APIs (may return empty data for some apps).
+- `GameCharts` requires FlareSolverr (direct requests return 403).
+- Call `charts.fetch_data` first if you want the meta description fallback from `/charts/`.
+- When chart API calls fail, `charts.data[:errors]` includes endpoint errors.
 
 ## Rails Integration
 
@@ -134,7 +160,7 @@ require 'sinatra'
 require 'steamdb'
 
 # Configure once
-solver = SteamDB::FlareSolverrSolver.new
+solver = SteamDB::FlareSolverrSolver.new(session: true)
 SteamDB.configure { |c| c.configure_captcha(solver: solver, enabled: true) }
 
 get '/games/:app_id' do
@@ -163,7 +189,8 @@ Then in your initializer:
 
 ```ruby
 solver = SteamDB::FlareSolverrSolver.new(
-  endpoint: ENV.fetch('FLARESOLVERR_URL', 'http://localhost:8191/v1')
+  endpoint: ENV.fetch('FLARESOLVERR_URL', 'http://localhost:8191/v1'),
+  session: true
 )
 ```
 
@@ -194,6 +221,18 @@ Example flow:
 - Use small batches (10-20 app IDs per run).
 - Use limited parallelism (2-4 workers). More can trigger blocks or timeouts.
 - If you see disconnects after 1 game, reduce concurrency and increase timeout.
+- For parallel workers, create a separate client per worker.
+
+```ruby
+SteamDB.with_client(SteamDB::HttpClient.new) do |client|
+  solver = SteamDB::FlareSolverrSolver.new(session: true)
+  SteamDB.configure(client) { |c| c.configure_captcha(solver: solver, enabled: true) }
+
+  game = SteamDB::Game.new(271590, client: client)
+  game.fetch_data
+  game.parse
+end
+```
 
 ### Caching
 
@@ -219,7 +258,8 @@ Or use environment variable for remote FlareSolverr:
 
 ```ruby
 SteamDB::FlareSolverrSolver.new(
-  endpoint: ENV['FLARESOLVERR_URL']  # e.g., 'http://flaresolverr:8191/v1'
+  endpoint: ENV['FLARESOLVERR_URL'],  # e.g., 'http://flaresolverr:8191/v1'
+  session: true
 )
 ```
 
@@ -303,10 +343,11 @@ end
 - Requires FlareSolverr; direct requests are likely to be blocked by Cloudflare.
 - SteamDB HTML can change; some fields may become unavailable without updates.
 - This gem parses the main `/app/:id/` page. It does not parse `/charts/` or
-  other sections unless you add custom parsing.
+  other sections unless you use the `/charts/` and `/info/` parsers.
 - High concurrency can cause dropped connections or timeouts.
 - Images are provided as URLs; you should not hotlink blindly in high-traffic
   contexts. Consider caching or proxying images if needed.
+- Chart API endpoints can return empty data for apps without public charts.
 
 ## Testing
 
@@ -345,7 +386,8 @@ require 'steamdb'
 
 unless Rails.env.test?
   solver = SteamDB::FlareSolverrSolver.new(
-    endpoint: ENV.fetch('FLARESOLVERR_URL', 'http://localhost:8191/v1')
+    endpoint: ENV.fetch('FLARESOLVERR_URL', 'http://localhost:8191/v1'),
+    session: true
   )
   
   SteamDB.configure do |client|

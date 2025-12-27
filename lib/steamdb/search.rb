@@ -8,11 +8,11 @@ module SteamDB
 
     module_function
 
-    def games(query, region: 'us', limit: nil)
+    def games(query, region: 'us', limit: nil, client: SteamDB.client)
       raise ArgumentError, 'query must be present' if query.nil? || query.strip.empty?
 
       encoded_query = URI.encode_www_form_component(query.strip)
-      document = SteamDB.fetch_page("#{SEARCH_PATH}?a=app&q=#{encoded_query}", region: region)
+      document = SteamDB.fetch_page("#{SEARCH_PATH}?a=app&q=#{encoded_query}", region: region, client: client)
 
       results = extract_table(document).map do |row|
         parse_row(row)
@@ -22,12 +22,11 @@ module SteamDB
     end
 
     def extract_table(document)
-      table = document.css('table').find do |node|
-        header_text = node.at_css('thead')&.text&.downcase || ''
-        header_text.include?('appid') || header_text.include?('app id')
+      table = document.css('table').max_by do |node|
+        node.css('a[href*="/app/"]').length
       end
 
-      return [] unless table
+      return [] unless table && table.css('a[href*="/app/"]').any?
 
       table.css('tbody tr')
     end

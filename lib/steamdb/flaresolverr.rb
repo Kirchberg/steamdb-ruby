@@ -31,11 +31,13 @@ module SteamDB
     # @param endpoint [String] FlareSolverr API endpoint
     # @param timeout [Integer] Maximum time to wait for challenge solving (milliseconds)
     # @param max_timeout [Integer] Maximum allowed timeout (milliseconds)
-    def initialize(endpoint: DEFAULT_ENDPOINT, timeout: DEFAULT_TIMEOUT, max_timeout: 120_000)
+    # @param session [Boolean] Reuse a FlareSolverr session for requests
+    def initialize(endpoint: DEFAULT_ENDPOINT, timeout: DEFAULT_TIMEOUT, max_timeout: 120_000, session: true)
       @endpoint = endpoint
       @timeout = [timeout, max_timeout].min
       @max_timeout = max_timeout
       @session_id = nil
+      @session_mode = session
     end
 
     # Create a persistent session
@@ -62,17 +64,23 @@ module SteamDB
       @session_id = nil
     end
 
+    def close
+      destroy_session
+    end
+
     # Get request through FlareSolverr (bypasses Cloudflare)
     # @param url [String] URL to fetch
     # @param max_timeout [Integer] Override timeout for this request
     # @return [Hash] Response with :status, :headers, :body, :cookies
-    def get(url, max_timeout: nil)
+    def get(url, max_timeout: nil, headers: nil)
+      ensure_session if session_enabled?
       params = {
         cmd: 'request.get',
         url: url,
         maxTimeout: max_timeout || @timeout
       }
 
+      params[:headers] = headers if headers && !headers.empty?
       params[:session] = @session_id if @session_id
 
       response = make_request(params)
@@ -96,7 +104,8 @@ module SteamDB
     # @param post_data [String] POST data
     # @param max_timeout [Integer] Override timeout for this request
     # @return [Hash] Response with :status, :headers, :body, :cookies
-    def post(url, post_data: nil, max_timeout: nil)
+    def post(url, post_data: nil, max_timeout: nil, headers: nil)
+      ensure_session if session_enabled?
       params = {
         cmd: 'request.post',
         url: url,
@@ -104,6 +113,7 @@ module SteamDB
       }
 
       params[:postData] = post_data if post_data
+      params[:headers] = headers if headers && !headers.empty?
       params[:session] = @session_id if @session_id
 
       response = make_request(params)
@@ -131,7 +141,7 @@ module SteamDB
       http.read_timeout = 5
 
       response = http.get(uri.path)
-      response.is_a?(Net::HTTPSuccess)
+      response.is_a?(Net::HTTPSuccess) || response.code.to_i == 405
     rescue StandardError
       false
     end
@@ -196,6 +206,16 @@ module SteamDB
         hash[cookie['name']] = cookie['value']
       end
     end
+
+    def ensure_session
+      return @session_id if @session_id
+
+      create_session
+    end
+
+    def session_enabled?
+      @session_mode != false
+    end
   end
 
   # Base class for CAPTCHA solving
@@ -216,9 +236,9 @@ module SteamDB
   class FlareSolverrSolver < CaptchaSolver
     attr_reader :flaresolverr
 
-    def initialize(endpoint: FlareSolverr::DEFAULT_ENDPOINT, timeout: 60_000, **options)
+    def initialize(endpoint: FlareSolverr::DEFAULT_ENDPOINT, timeout: 60_000, session: true, **options)
       super(timeout: timeout / 1000, **options)
-      @flaresolverr = FlareSolverr.new(endpoint: endpoint, timeout: timeout)
+      @flaresolverr = FlareSolverr.new(endpoint: endpoint, timeout: timeout, session: session)
     end
 
     def available?
@@ -226,4 +246,3 @@ module SteamDB
     end
   end
 end
-

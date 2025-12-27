@@ -6,9 +6,10 @@ module SteamDB
   class Game
     attr_reader :data
 
-    def initialize(game_id, region: 'us')
+    def initialize(game_id, region: 'us', client: SteamDB.client)
       @game_id = game_id.to_s
       @region = region.to_s
+      @client = client
       @page = nil
       @data = {
         info: {},
@@ -18,7 +19,7 @@ module SteamDB
     end
 
     def fetch_data
-      @page = SteamDB.fetch_page("/app/#{@game_id}/", region: @region)
+      @page = SteamDB.fetch_page("/app/#{@game_id}/", region: @region, client: @client)
       self
     rescue HTTPError => e
       raise Error, "Unable to fetch game #{@game_id}: #{e.message}"
@@ -145,8 +146,9 @@ module SteamDB
 
       game_info[:description] = page.at_css('p.header-description')&.text&.strip.to_s
       game_info[:logo_url] = page.at_css('img.app-logo')&.[]('src')
-      game_info[:library_logo_url] = parse_library_logo(page)
-      game_info[:library_hero_url] = parse_library_hero(page)
+      assets = parse_library_assets(page)
+      game_info[:library_logo_url] = assets[:library_logo_url]
+      game_info[:library_hero_url] = assets[:library_hero_url]
 
       game_info
     end
@@ -193,98 +195,46 @@ module SteamDB
       text.to_s.gsub(/\s+/, ' ').strip
     end
 
-    def parse_library_logo(page)
-      # Find library_logo section in the assets table
-      library_logo_url = nil
-      library_logo_2x_url = nil
-      
-      page.css('tr').each do |row|
-        cells = row.css('td')
-        cells.each_with_index do |cell, i|
-          if cell.text.strip == 'library_logo ↴'
-            # Look for image/english and image2x/english in following rows
-            rows = row.parent.css('tr')
-            current_index = rows.index(row)
-            
-            # Check next 15 rows after library_logo ↴
-            (current_index + 1..[current_index + 15, rows.length - 1].min).each do |idx|
-              next_row_cells = rows[idx].css('td')
-              
-              next_row_cells.each_with_index do |nc, j|
-                text = nc.text.strip
-                
-                if text == 'image/english' || text == 'image2x/english'
-                  # Get the link in the next cell
-                  link = next_row_cells[j + 1]&.at_css('a')
-                  if link
-                    href = link['href']
-                    # Check if it's a logo file (logo.png, logo_2x.png, or contains "logo" in path)
-                    if href.match?(/logo/i) || href.match?(/library_logo/i)
-                      if text == 'image2x/english'
-                        library_logo_2x_url = href
-                      elsif text == 'image/english' && library_logo_url.nil?
-                        library_logo_url = href
-                      end
-                    end
-                  end
-                end
-              end
-            end
-            
-            # Prefer 2x version if available, otherwise use 1x
-            return library_logo_2x_url || library_logo_url
-          end
-        end
-      end
-      
-      nil
-    end
+    def parse_library_assets(page)
+      rows = page.css('tr')
+      assets_1x = {}
+      assets_2x = {}
 
-    def parse_library_hero(page)
-      # Find library_hero section in the assets table
-      library_hero_url = nil
-      library_hero_2x_url = nil
-      
-      page.css('tr').each do |row|
-        cells = row.css('td')
-        cells.each_with_index do |cell, i|
-          if cell.text.strip == 'library_hero ↴'
-            # Look for image/english and image2x/english in following rows
-            rows = row.parent.css('tr')
-            current_index = rows.index(row)
-            
-            # Check next 15 rows after library_hero ↴
-            (current_index + 1..[current_index + 15, rows.length - 1].min).each do |idx|
-              next_row_cells = rows[idx].css('td')
-              
-              next_row_cells.each_with_index do |nc, j|
-                text = nc.text.strip
-                
-                if text == 'image/english' || text == 'image2x/english'
-                  # Get the link in the next cell
-                  link = next_row_cells[j + 1]&.at_css('a')
-                  if link
-                    href = link['href']
-                    # Check if it's a hero file (hero.png, hero_2x.png, or contains "hero" in path)
-                    if href.match?(/hero/i) || href.match?(/library_hero/i)
-                      if text == 'image2x/english'
-                        library_hero_2x_url = href
-                      elsif text == 'image/english' && library_hero_url.nil?
-                        library_hero_url = href
-                      end
-                    end
-                  end
-                end
-              end
-            end
-            
-            # Prefer 2x version if available, otherwise use 1x
-            return library_hero_2x_url || library_hero_url
+      rows.each_with_index do |row, row_index|
+        label = row.at_css('td')&.text&.strip
+        next unless label == 'library_logo ↴' || label == 'library_hero ↴'
+
+        key = label.include?('logo') ? :library_logo_url : :library_hero_url
+        scan_rows = rows[(row_index + 1)..(row_index + 15)] || []
+
+        scan_rows.each do |next_row|
+          cells = next_row.css('td')
+          next if cells.empty?
+
+          format = cells[0]&.text&.strip
+          next unless format == 'image/english' || format == 'image2x/english'
+
+          href = cells[1]&.at_css('a')&.[]('href')
+          next unless href
+
+          if key == :library_logo_url
+            next unless href.match?(/logo/i) || href.match?(/library_logo/i)
+          else
+            next unless href.match?(/hero/i) || href.match?(/library_hero/i)
+          end
+
+          if format == 'image2x/english'
+            assets_2x[key] ||= href
+          else
+            assets_1x[key] ||= href
           end
         end
       end
-      
-      nil
+
+      {
+        library_logo_url: assets_2x[:library_logo_url] || assets_1x[:library_logo_url],
+        library_hero_url: assets_2x[:library_hero_url] || assets_1x[:library_hero_url]
+      }
     end
   end
 end

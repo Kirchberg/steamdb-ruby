@@ -7,6 +7,7 @@ A Ruby gem for scraping SteamDB with automatic Cloudflare bypass. Get game data,
 - 🆓 **Free Cloudflare bypass** using FlareSolverr
 - 📊 **JSON output** for easy integration
 - 🎮 **Game data**: info, prices across regions, screenshots
+- 📈 **Charts & info**: player charts, languages, DLC, depots
 - 🔍 **Search games** and trending lists
 - 🚀 **Simple CLI** tool for quick access
 
@@ -130,7 +131,7 @@ Examples:
 require 'steamdb'
 
 # Setup FlareSolverr solver (free Cloudflare bypass)
-solver = SteamDB::FlareSolverrSolver.new
+solver = SteamDB::FlareSolverrSolver.new(session: true)
 SteamDB.configure do |client|
   client.configure_captcha(solver: solver, enabled: true)
 end
@@ -148,6 +149,34 @@ game.library_logo_url # => "https://..." (library logo, image2x/english preferre
 game.prices            # => Array of price hashes
 game.screenshots       # => Array of screenshot URLs
 ```
+
+### Game Info (/info/)
+
+```ruby
+info = SteamDB::GameInfo.new(1808500)
+info.fetch_data
+info.parse
+
+info.data[:languages]     # => Array of supported languages
+info.data[:tags]          # => Array of tags
+info.data[:dlc]           # => DLC table rows
+info.data[:depots]        # => Depot table rows
+```
+
+### Game Charts (/charts/)
+
+```ruby
+charts = SteamDB::GameCharts.new(1808500)
+charts.parse
+
+charts.data[:summary]     # => current/24h/all-time peaks
+charts.data[:week]        # => hourly series (start/step in ms)
+charts.data[:max]         # => daily series (start/step in ms)
+charts.data[:errors]      # => optional error details per endpoint
+```
+
+Note: chart APIs may return empty data for apps without public charts.
+Requires FlareSolverr; direct requests to chart APIs return 403.
 
 ### Export as JSON
 
@@ -204,7 +233,8 @@ require 'steamdb'
 # Configure FlareSolverr (one-time setup)
 solver = SteamDB::FlareSolverrSolver.new(
   endpoint: 'http://localhost:8191/v1',
-  timeout: 60_000  # milliseconds
+  timeout: 60_000,                       # milliseconds
+  session: true                          # Reuse a browser session; set false to disable
 )
 
 SteamDB.configure do |client|
@@ -221,7 +251,7 @@ Create `app/services/steamdb_service.rb`:
 ```ruby
 class SteamDbService
   def initialize
-    @solver = SteamDB::FlareSolverrSolver.new
+    @solver = SteamDB::FlareSolverrSolver.new(session: true)
     SteamDB.configure { |c| c.configure_captcha(solver: @solver, enabled: true) }
   end
 
@@ -305,7 +335,8 @@ SteamDB.configure do |client|
   # Configure FlareSolverr
   solver = SteamDB::FlareSolverrSolver.new(
     endpoint: 'http://localhost:8191/v1',  # FlareSolverr endpoint
-    timeout: 60_000                          # Max wait time (milliseconds)
+    timeout: 60_000,                       # Max wait time (milliseconds)
+    session: true                          # Reuse a browser session; set false to disable
   )
   client.configure_captcha(solver: solver, enabled: true)
   
@@ -317,6 +348,19 @@ SteamDB.configure do |client|
   
   # Custom user agents (optional)
   # client.user_agents = ['Custom User Agent/1.0']
+end
+```
+
+### Per-Worker Clients (Parallel Jobs)
+
+```ruby
+SteamDB.with_client(SteamDB::HttpClient.new) do |client|
+  solver = SteamDB::FlareSolverrSolver.new(session: true)
+  SteamDB.configure(client) { |c| c.configure_captcha(solver: solver, enabled: true) }
+
+  game = SteamDB::Game.new(271590, client: client)
+  game.fetch_data
+  game.parse
 end
 ```
 

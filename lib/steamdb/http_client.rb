@@ -64,6 +64,9 @@ module SteamDB
       @open_timeout = open_timeout
       @read_timeout = read_timeout
       @cookie_jar = HTTP::CookieJar.new
+      @cookie_version = 0
+      @cookie_header_cache_key = nil
+      @cookie_header_cache = nil
       cookies.each { |name, value| set_cookie(name, value) }
       @throttle_mutex = Mutex.new
       @next_available_at = Time.at(0)
@@ -74,6 +77,8 @@ module SteamDB
       @captcha_solver = captcha_solver
       @captcha_retry_enabled = true
       @captcha_max_retries = 3
+      @http_mutex = Mutex.new
+      @http = nil
     end
 
     def fetch(uri, headers: {}, region: 'us')
@@ -129,9 +134,9 @@ module SteamDB
     
     def perform_request_via_flaresolverr(uri, headers:, region:)
       flaresolverr = @captcha_solver.flaresolverr
-      
-      # Use FlareSolverr to fetch the page (bypasses Cloudflare automatically)
-      result = flaresolverr.get(uri.to_s)
+
+      request_headers = build_request_headers(headers, region)
+      result = flaresolverr.get(uri.to_s, headers: request_headers)
       
       # Apply cookies from FlareSolverr to our cookie jar
       result[:cookies].each do |name, value|
@@ -155,39 +160,45 @@ module SteamDB
 
 
     def perform_request(uri, headers:, region:)
-      header_hash = normalize_headers(headers)
+      header_hash = build_request_headers(headers, region)
 
       request = Net::HTTP::Get.new(uri)
-      apply_headers(request, header_hash, region)
+      header_hash.each do |key, value|
+        request[key] = value if value
+      end
 
-      http = Net::HTTP.new(uri.host, uri.port)
-      http.use_ssl = uri.scheme == 'https'
-      http.open_timeout = @open_timeout
-      http.read_timeout = @read_timeout
-
-      raw_response = http.request(request)
+      raw_response = with_http_connection(uri) do |http|
+        http.request(request)
+      end
       HttpResponse.new(
         status: raw_response.code.to_i,
         headers: raw_response.each_header.to_h,
         body: raw_response.body
       )
     rescue SocketError, Timeout::Error => e
+      reset_http_connection
+      raise HTTPError, "Failed to fetch #{uri}: #{e.message}"
+    rescue EOFError, Errno::ECONNRESET => e
+      reset_http_connection
       raise HTTPError, "Failed to fetch #{uri}: #{e.message}"
     end
 
-    def apply_headers(request, headers, region)
+    def build_request_headers(headers, region)
       base_headers = {
         'Accept-Language' => 'en-US,en;q=0.5',
         'User-Agent' => next_user_agent,
         'Cookie' => merged_cookies(region, headers['Cookie'])
       }
 
-      (base_headers.merge(headers)).each do |key, value|
-        request[key] = value if value
-      end
+      base_headers.merge(headers)
     end
 
     def merged_cookies(region, extra_cookie_header)
+      cache_key = [region.to_s, extra_cookie_header.to_s, @cookie_version]
+      if @cookie_header_cache_key == cache_key
+        return @cookie_header_cache
+      end
+
       jar = HTTP::CookieJar.new
       @cookie_jar.cookies.each { |cookie| jar.add(cookie.dup) }
       ensure_region_cookie!(jar, region)
@@ -198,7 +209,10 @@ module SteamDB
         end
       end
 
-      jar.cookies(TARGET_URI).map(&:to_s).join('; ')
+      header = jar.cookies(TARGET_URI).map(&:to_s).join('; ')
+      @cookie_header_cache_key = cache_key
+      @cookie_header_cache = header
+      header
     end
 
     def normalize_headers(headers)
@@ -257,6 +271,7 @@ module SteamDB
       raise ArgumentError, 'cookie must be an HTTP::Cookie' unless cookie.is_a?(HTTP::Cookie)
 
       @cookie_jar.add(cookie)
+      bump_cookie_version
     end
 
     def set_cookie(name, value, domain: DEFAULT_DOMAIN, path: '/')
@@ -274,6 +289,7 @@ module SteamDB
           @cookie_jar.delete(cookie)
         end
       end
+      bump_cookie_version
     end
 
     def cookie_value(name)
@@ -310,8 +326,41 @@ module SteamDB
       end
     end
 
+    def with_http_connection(uri)
+      @http_mutex.synchronize do
+        if @http && (@http.address != uri.host || @http.port != uri.port || @http.use_ssl? != (uri.scheme == 'https'))
+          reset_http_connection
+        end
+
+        @http ||= Net::HTTP.new(uri.host, uri.port)
+        @http.use_ssl = uri.scheme == 'https'
+        @http.open_timeout = @open_timeout
+        @http.read_timeout = @read_timeout
+        @http.start unless @http.started?
+
+        yield @http
+      end
+    end
+
+    def reset_http_connection
+      return unless @http
+
+      @http.finish if @http.started?
+    rescue IOError, Errno::ECONNRESET
+      nil
+    ensure
+      @http = nil
+    end
+
+    def bump_cookie_version
+      @cookie_version += 1
+      @cookie_header_cache_key = nil
+      @cookie_header_cache = nil
+    end
+
     private :merged_cookies, :next_user_agent, :throttle!, :read_cache, :store_cache,
             :cache_key_for, :build_uri, :ensure_region_cookie!, :perform_request_with_captcha_retry,
-            :perform_request_via_flaresolverr, :detect_captcha_challenge
+            :perform_request_via_flaresolverr, :detect_captcha_challenge, :build_request_headers,
+            :bump_cookie_version, :with_http_connection, :reset_http_connection
   end
 end

@@ -4,8 +4,8 @@ module SteamDB
   module Dashboard
     module_function
 
-    def trending(region: 'us', max_items: 10)
-      document = SteamDB.fetch_page('/', region: region)
+    def trending(region: 'us', max_items: 10, client: SteamDB.client)
+      document = SteamDB.fetch_page('/', region: region, client: client)
       seen_titles = {}
 
       document.css('table').filter_map do |table|
@@ -64,7 +64,10 @@ module SteamDB
     private_class_method :extract_value
 
     def derive_title_for(table)
-      title = table.xpath('preceding::h2[1] | preceding::h3[1]').first
+      title = table.at_css('thead .table-title')&.text&.strip
+      return title unless title.nil? || title.empty?
+
+      title = table.xpath('preceding::h1[1] | preceding::h2[1] | preceding::h3[1]').first
       title&.text&.strip
     end
     private_class_method :derive_title_for

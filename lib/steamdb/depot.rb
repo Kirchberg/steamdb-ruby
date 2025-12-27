@@ -6,9 +6,10 @@ module SteamDB
   class Depot
     attr_reader :data
 
-    def initialize(depot_id, region: 'us')
+    def initialize(depot_id, region: 'us', client: SteamDB.client)
       @depot_id = depot_id.to_s
       @region = region.to_s
+      @client = client
       @page = nil
       @data = {
         info: {}
@@ -16,7 +17,7 @@ module SteamDB
     end
 
     def fetch_data
-      @page = SteamDB.fetch_page("/depot/#{@depot_id}/", region: @region)
+      @page = SteamDB.fetch_page("/depot/#{@depot_id}/", region: @region, client: @client)
       self
     rescue HTTPError => e
       raise Error, "Unable to fetch depot #{@depot_id}: #{e.message}"
