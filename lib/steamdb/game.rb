@@ -87,31 +87,36 @@ module SteamDB
     def parse_game_information(page)
       game_info = {}
 
-      # Parse main table (.table-dark)
-      page.css('.table-dark > tbody > tr').each do |row|
-        cells = row.css('td')
-        heading = text_content(cells[0])
+      info_table = find_info_table(page)
+      if info_table
+        info_table.css('tr').each do |row|
+          cells = row.css('td, th')
+          next if cells.length < 2
 
-        case heading
-        when 'App ID'
-          game_info[:id] = text_content(cells[1]).to_i
-        when 'App Type'
-          game_info[:type] = text_content(cells[1])
-        when 'Developer'
-          game_info[:developer] = text_content(cells[1])
-        when 'Publisher'
-          game_info[:publisher] = text_content(cells[1])
-        when 'Last Record Update'
-          timestamp = cells[1]&.at_css('span')&.[]('title')
-          game_info[:last_update] = parse_timestamp(timestamp)
-        when 'Name'
-          game_info[:name] = text_content(cells[1])
-        when 'Release Date'
-          timestamp = cells[1]&.at_css('span')&.[]('title')
-          game_info[:release_date] = parse_timestamp(timestamp)
-        when 'Supported Systems'
-          systems = cells[1]&.at_css('meta')&.[]('content')
-          game_info[:os] = systems.to_s.split(', ').reject(&:empty?)
+          heading = text_content(cells[0])
+          value_cell = cells[1]
+
+          case heading
+          when 'App ID'
+            game_info[:id] = text_content(value_cell).to_i
+          when 'App Type'
+            game_info[:type] = text_content(value_cell)
+          when 'Developer'
+            game_info[:developer] = text_content(value_cell)
+          when 'Publisher'
+            game_info[:publisher] = text_content(value_cell)
+          when 'Last Record Update'
+            timestamp = value_cell&.at_css('span')&.[]('title')
+            game_info[:last_update] = parse_timestamp(timestamp)
+          when 'Name'
+            game_info[:name] = text_content(value_cell)
+          when 'Release Date'
+            timestamp = value_cell&.at_css('span')&.[]('title')
+            game_info[:release_date] = parse_timestamp(timestamp)
+          when 'Supported Systems'
+            systems = value_cell&.at_css('meta')&.[]('content') || text_content(value_cell)
+            game_info[:os] = systems.to_s.split(', ').reject(&:empty?)
+          end
         end
       end
 
@@ -134,12 +139,24 @@ module SteamDB
         end
       end
 
+      if game_info[:name].nil? || game_info[:name].empty?
+        game_info[:name] = text_content(page.at_css('h1'))
+      end
+
       game_info[:description] = page.at_css('p.header-description')&.text&.strip.to_s
       game_info[:logo_url] = page.at_css('img.app-logo')&.[]('src')
       game_info[:library_logo_url] = parse_library_logo(page)
       game_info[:library_hero_url] = parse_library_hero(page)
 
       game_info
+    end
+
+    def find_info_table(page)
+      page.css('table').find do |table|
+        table.css('tr').any? do |row|
+          text_content(row.css('td, th')[0]) == 'App ID'
+        end
+      end
     end
 
     def parse_prices(page)

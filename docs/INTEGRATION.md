@@ -169,6 +169,38 @@ solver = SteamDB::FlareSolverrSolver.new(
 
 ## Production Considerations
 
+## Recommended Usage Pattern
+
+For most apps, treat SteamDB as a background data source and serve the cached
+results to users. This avoids slow requests, reduces Cloudflare risk, and makes
+responses stable.
+
+### Background Jobs (Preferred)
+
+- Fetch data in a background job (Sidekiq/ActiveJob/Resque).
+- Store parsed JSON in your database.
+- In your API/controller, serve the cached JSON.
+- For images, store the URLs from SteamDB and render them in the next request.
+
+Example flow:
+
+1. User requests game data.
+2. If cache is stale, enqueue background job to refresh.
+3. Respond immediately with cached data.
+4. Next request sees refreshed data (including image URLs).
+
+### Batching and Concurrency
+
+- Use small batches (10-20 app IDs per run).
+- Use limited parallelism (2-4 workers). More can trigger blocks or timeouts.
+- If you see disconnects after 1 game, reduce concurrency and increase timeout.
+
+### Caching
+
+- Keep cache enabled; default is 5 minutes.
+- For production, use Redis or another shared cache.
+- Store parsed JSON to avoid re-parsing on every request.
+
 ### 1. FlareSolverr Deployment
 
 Run FlareSolverr as a service:
@@ -266,6 +298,16 @@ class SteamDbService
 end
 ```
 
+## Limitations and Constraints
+
+- Requires FlareSolverr; direct requests are likely to be blocked by Cloudflare.
+- SteamDB HTML can change; some fields may become unavailable without updates.
+- This gem parses the main `/app/:id/` page. It does not parse `/charts/` or
+  other sections unless you add custom parsing.
+- High concurrency can cause dropped connections or timeouts.
+- Images are provided as URLs; you should not hotlink blindly in high-traffic
+  contexts. Consider caching or proxying images if needed.
+
 ## Testing
 
 ```ruby
@@ -341,4 +383,3 @@ class SteamDbService
   end
 end
 ```
-
