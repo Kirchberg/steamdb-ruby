@@ -7,7 +7,7 @@ A Ruby gem for scraping SteamDB with automatic Cloudflare bypass. Get game data,
 - 🆓 **Free Cloudflare bypass** using FlareSolverr
 - 📊 **JSON output** for easy integration
 - 🎮 **Game data**: info, prices across regions, screenshots
-- 📈 **Charts & info**: player charts, languages, DLC, depots
+- 📈 **Charts & info**: player charts, languages, DLC, depots, most played, trending followers, IGDB links
 - 🔍 **Search games** and trending lists
 - 🚀 **Simple CLI** tool for quick access
 
@@ -222,6 +222,35 @@ trending.each do |section|
 end
 ```
 
+### Most Played Games (/charts/)
+
+```ruby
+# include_igdb: true makes extra per-app requests to /app/<id>/charts/
+most_played = SteamDB.most_played(max_items: 10, include_igdb: true)
+most_played.each do |entry|
+  puts "#{entry[:rank]}. #{entry[:name]} (#{entry[:current_players]} players)"
+  puts "  Steam: #{entry[:store_url]}" if entry[:store_url]
+  puts "  IGDB: #{entry[:igdb_url]}" if entry[:igdb_url]
+end
+```
+
+**Important about `include_igdb`:**
+- Triggers N extra requests (one per game to `/app/<id>/charts/`).
+- Large lists can easily hit 429/403 and temporary SteamDB rate‑limits.
+- Recommendation: keep `max_items` small, enable cache and throttling, and avoid `include_igdb` by default.
+
+### Trending by Followers Gain (/stats/trendingfollowers/)
+
+```ruby
+# include_igdb: true makes extra per-app requests to /app/<id>/charts/
+trending_followers = SteamDB.trending_followers(max_items: 10, include_igdb: true)
+trending_followers.each do |entry|
+  puts "#{entry[:rank]}. #{entry[:name]} (+#{entry[:gain_7d]} followers)"
+  puts "  Steam: #{entry[:store_url]}" if entry[:store_url]
+  puts "  IGDB: #{entry[:igdb_url]}" if entry[:igdb_url]
+end
+```
+
 ## Using in Your Ruby Project
 
 ### Basic Setup
@@ -342,6 +371,16 @@ SteamDB.configure do |client|
   
   # Cache configuration (optional)
   client.configure_cache(ttl: 600)  # Cache for 10 minutes (default: 5 minutes)
+
+  # Retry/backoff on 429/403 (optional)
+  # max_attempts: total attempts including the first one
+  client.configure_retry(
+    max_attempts: 3,
+    base_delay: 0.5,
+    max_delay: 8.0,
+    jitter: 0.25,
+    statuses: [429, 403]
+  )
   
   # Throttling (optional, not needed with FlareSolverr)
   # client.configure_throttle(interval: 1.0)  # Uncomment if needed

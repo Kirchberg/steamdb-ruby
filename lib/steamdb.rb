@@ -10,6 +10,8 @@ require_relative 'steamdb/http_client'
 require_relative 'steamdb/captcha_detector'
 require_relative 'steamdb/flaresolverr'
 require_relative 'steamdb/session'
+require_relative 'steamdb/table_helper'
+require_relative 'steamdb/igdb_link'
 
 module SteamDB
   class Error < StandardError; end
@@ -67,6 +69,14 @@ module SteamDB
     Dashboard.trending(region: region, max_items: max_items, client: client)
   end
 
+  def self.most_played(region: 'us', max_items: 10, include_igdb: false, client: self.client)
+    ChartsOverview.most_played(region: region, max_items: max_items, include_igdb: include_igdb, client: client)
+  end
+
+  def self.trending_followers(region: 'us', max_items: 10, include_igdb: false, client: self.client)
+    TrendingFollowers.trending(region: region, max_items: max_items, include_igdb: include_igdb, client: client)
+  end
+
   def self.extract_json_payload(body)
     return '' if body.nil?
 
@@ -82,3 +92,5 @@ require_relative 'steamdb/game_charts'
 require_relative 'steamdb/depot'
 require_relative 'steamdb/search'
 require_relative 'steamdb/dashboard'
+require_relative 'steamdb/charts_overview'
+require_relative 'steamdb/trending_followers'
