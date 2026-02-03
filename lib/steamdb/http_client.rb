@@ -4,6 +4,7 @@ require 'net/http'
 require 'uri'
 require 'digest'
 require 'thread'
+require 'time'
 require 'http/cookie'
 require 'http/cookie_jar'
 
@@ -73,6 +74,11 @@ module SteamDB
       @throttle_interval = 0  # No throttling by default - FlareSolverr handles rate limiting
       @cache_store = InMemoryCache.new
       @cache_ttl = 300  # 5 minutes default cache
+      @retry_max_attempts = 3
+      @retry_base_delay = 0.5
+      @retry_max_delay = 8.0
+      @retry_jitter = 0.25
+      @retry_statuses = [429, 403].freeze
       @user_agent_index = 0
       @captcha_solver = captcha_solver
       @captcha_retry_enabled = true
@@ -90,9 +96,8 @@ module SteamDB
         return cached_response
       end
 
-      throttle!
-      response = perform_request_with_captcha_retry(request_uri, headers: header_hash, region: region)
-      store_cache(cache_key, response)
+      response = perform_request_with_backoff(request_uri, headers: header_hash, region: region)
+      store_cache(cache_key, response) unless retryable_status?(response.status)
       response
     end
 
@@ -108,6 +113,14 @@ module SteamDB
         @cache_store = store
       end
       @cache_ttl = ttl.to_f
+    end
+
+    def configure_retry(max_attempts: 3, base_delay: 0.5, max_delay: 8.0, jitter: 0.25, statuses: [429, 403])
+      @retry_max_attempts = [max_attempts.to_i, 1].max
+      @retry_base_delay = [base_delay.to_f, 0.0].max
+      @retry_max_delay = [max_delay.to_f, @retry_base_delay].max
+      @retry_jitter = [jitter.to_f, 0.0].max
+      @retry_statuses = Array(statuses).map(&:to_i).uniq.freeze
     end
 
     def configure_captcha(solver: nil, enabled: true, max_retries: 3)
@@ -130,6 +143,19 @@ module SteamDB
       
       # Fallback to regular request if FlareSolverr is not configured
       perform_request(uri, headers: headers, region: region)
+    end
+
+    def perform_request_with_backoff(uri, headers:, region:)
+      attempts = 0
+
+      loop do
+        throttle!
+        response = perform_request_with_captcha_retry(uri, headers: headers, region: region)
+        attempts += 1
+        return response unless retryable_status?(response.status) && attempts < @retry_max_attempts
+
+        sleep(retry_delay(attempts, response))
+      end
     end
     
     def perform_request_via_flaresolverr(uri, headers:, region:)
@@ -191,6 +217,40 @@ module SteamDB
       }
 
       base_headers.merge(headers)
+    end
+
+    def retryable_status?(status)
+      @retry_statuses.include?(status.to_i)
+    end
+
+    def retry_delay(attempt, response)
+      delay = @retry_base_delay * (2**(attempt - 1))
+      delay = [delay, @retry_max_delay].min
+
+      retry_after = retry_after_seconds(response)
+      delay = [delay, retry_after].max if retry_after
+
+      if @retry_jitter.positive?
+        delay += delay * @retry_jitter * rand
+      end
+
+      delay
+    end
+
+    def retry_after_seconds(response)
+      return nil unless response && response.headers
+
+      header = response.headers['retry-after'] || response.headers['Retry-After']
+      return nil if header.nil?
+
+      value = header.to_s.strip
+      return nil if value.empty?
+
+      return value.to_i if value.match?(/\A\d+\z/)
+
+      Time.httpdate(value).to_i - Time.now.to_i
+    rescue ArgumentError
+      nil
     end
 
     def merged_cookies(region, extra_cookie_header)
@@ -361,6 +421,7 @@ module SteamDB
     private :merged_cookies, :next_user_agent, :throttle!, :read_cache, :store_cache,
             :cache_key_for, :build_uri, :ensure_region_cookie!, :perform_request_with_captcha_retry,
             :perform_request_via_flaresolverr, :detect_captcha_challenge, :build_request_headers,
-            :bump_cookie_version, :with_http_connection, :reset_http_connection
+            :bump_cookie_version, :with_http_connection, :reset_http_connection, :perform_request_with_backoff,
+            :retryable_status?, :retry_delay, :retry_after_seconds
   end
 end

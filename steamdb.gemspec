@@ -30,6 +30,7 @@ Gem::Specification.new do |spec|
 
   spec.add_development_dependency 'bundler', '>= 2.5'
   spec.add_development_dependency 'rake', '>= 13.0'
+  spec.add_development_dependency 'rspec', '>= 3.12'
 
   # Optional dependencies for enhanced functionality
   # For browser automation and manual CAPTCHA solving:
