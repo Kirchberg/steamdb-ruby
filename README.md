@@ -7,7 +7,7 @@ A Ruby gem for scraping SteamDB with automatic Cloudflare bypass. Get game data,
 - 🆓 **Free Cloudflare bypass** using FlareSolverr
 - 📊 **JSON output** for easy integration
 - 🎮 **Game data**: info, prices across regions, screenshots
-- 📈 **Charts & info**: player charts, languages, DLC, depots, most played, trending followers, IGDB links
+- 📈 **Charts & info**: player charts, languages, DLC, depots, most played, trending followers, upcoming releases, IGDB links
 - 🔍 **Search games** and trending lists
 - 🚀 **Simple CLI** tool for quick access
 
@@ -248,6 +248,22 @@ trending_followers.each do |entry|
   puts "#{entry[:rank]}. #{entry[:name]} (+#{entry[:gain_7d]} followers)"
   puts "  Steam: #{entry[:store_url]}" if entry[:store_url]
   puts "  IGDB: #{entry[:igdb_url]}" if entry[:igdb_url]
+end
+```
+
+### Upcoming Releases (/upcoming/)
+
+```ruby
+# Default upcoming list (next 7 days)
+upcoming = SteamDB.upcoming(max_items: 10)
+upcoming.each do |entry|
+  puts "#{entry[:rank]}. #{entry[:name]} (release: #{entry[:release_date_text]})"
+end
+
+# Example with filters (matches: /upcoming/?lastweek=&min_rating=65&sort=peak_desc)
+upcoming = SteamDB.upcoming(lastweek: true, min_rating: 65, sort: 'peak_desc', max_items: 10)
+upcoming.each do |entry|
+  puts "#{entry[:rank]}. #{entry[:name]} (peak: #{entry[:peak]})"
 end
 ```
 

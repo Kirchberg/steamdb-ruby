@@ -12,6 +12,7 @@ require_relative 'steamdb/flaresolverr'
 require_relative 'steamdb/session'
 require_relative 'steamdb/table_helper'
 require_relative 'steamdb/igdb_link'
+require_relative 'steamdb/upcoming'
 
 module SteamDB
   class Error < StandardError; end
@@ -77,6 +78,18 @@ module SteamDB
     TrendingFollowers.trending(region: region, max_items: max_items, include_igdb: include_igdb, client: client)
   end
 
+  def self.upcoming(region: 'us', max_items: 10, include_igdb: false, lastweek: nil, min_rating: nil, sort: nil, client: self.client)
+    Upcoming.upcoming(
+      region: region,
+      max_items: max_items,
+      include_igdb: include_igdb,
+      lastweek: lastweek,
+      min_rating: min_rating,
+      sort: sort,
+      client: client
+    )
+  end
+
   def self.extract_json_payload(body)
     return '' if body.nil?
 
@@ -94,3 +107,4 @@ require_relative 'steamdb/search'
 require_relative 'steamdb/dashboard'
 require_relative 'steamdb/charts_overview'
 require_relative 'steamdb/trending_followers'
+require_relative 'steamdb/upcoming'
